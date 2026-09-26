@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+tb_logs/
+.vscode/
+
+# Trained policies are committed deliberately (see README) -- ignore scratch runs.
+ppo_probe.zip
+ppo_smoke.zip
+experiments/runs/
