@@ -5,7 +5,13 @@ last two (distance and gap offset of the pipe after next) to zero, leaving the
 agent with only the pipe immediately ahead. Everything else -- physics, reward,
 network, seeds, step budget -- is held fixed.
 
-Usage:  python experiments/ablation_lookahead.py --timesteps 2000000
+Result: no. Over three seeds at 2M steps the arms are indistinguishable
+(16.1 vs 18.1 mean pipes, p ~ 0.46), and the direction flips between seeds.
+The improvement originally attributed to these features came from a longer
+training run that changed at the same time. See experiments/ablation_results.json
+and the README.
+
+Usage:  python experiments/ablation_lookahead.py --timesteps 2000000 --seeds 0 1 2
 """
 
 import argparse

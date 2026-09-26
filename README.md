@@ -18,33 +18,45 @@ python play.py --human    # play it yourself (SPACE)
 
 ---
 
-## What is interesting here
+## An ablation, and a negative result
 
-The headline number is not the point. The useful part of this project is a
-measured finding about the **observation space**, which is the kind of thing
-that decides whether an agent learns at all:
+During development the agent plateaued around 13 pipes. Logging death states
+(position, velocity, and which pipe was hit) showed a consistent failure: the
+bird falling at terminal velocity with the gap below it, unable to reach the
+opening in time.
 
-> An early version of the environment exposed only the *next* pipe. The agent
-> plateaued at ~13 pipes and kept dying in a specific way: falling at terminal
-> velocity with the gap below it, unable to reach the opening in time.
->
-> Consecutive gap centres can differ by up to 256 px, and the bird only has
-> ~53 steps between pipes. Descending that far takes most of that window, so the
-> agent had to start moving *before* the relevant pipe was observable. The task
-> was quietly partially observable.
->
-> Adding two features for the pipe after next raised held-out performance by
-> roughly an order of magnitude at a *lower* step budget.
+That suggested a partial-observability problem. Consecutive gap centres can
+differ by up to 256 px while the bird has only ~53 steps between pipes, so
+covering that distance takes most of the available window — the agent has to
+start moving before the relevant pipe is observable. The environment exposed
+only the *next* pipe, so I added two features describing the pipe after next.
+Performance improved substantially, and the obvious conclusion was that the
+extra features fixed it.
 
-`experiments/ablation_lookahead.py` reproduces this as a controlled comparison:
-identical physics, reward, network, seeds and step budget, with the two
-lookahead features masked to zero in the ablated arm.
+**They did not.** Testing that properly showed the improvement came from
+training longer, not from the added inputs. `experiments/ablation_lookahead.py`
+masks the two lookahead features to zero and holds physics, reward, network,
+seeds and step budget fixed:
 
-<!-- ABLATION_TABLE -->
+| Arm | seed 0 | seed 1 | seed 2 | Mean |
+|---|---|---|---|---|
+| With lookahead (7 features) | 16.9 | 18.6 | 12.9 | **16.1** |
+| Without lookahead (5 features) | 18.9 | 14.8 | 20.6 | **18.1** |
 
-The failure was diagnosed by logging death states (position, velocity, and which
-pipe was hit) rather than by tuning hyperparameters, which is what made the cause
-visible.
+Mean pipes over 30 held-out seeds, 2M steps per arm. The difference is not
+significant (p ≈ 0.46), and the direction flips between seeds. The original
+comparison was confounded: the observation change coincided with a much longer
+training run, and the step budget — not the features — accounted for the gain.
+
+The 7-feature observation is kept because it is better motivated by the physics
+and costs nothing, but this repo does not claim it helps, because the measurement
+does not support that.
+
+*Caveat, stated because it matters:* the `with_lookahead` seed-2 run completed
+1.5M steps rather than 2M after a process was killed; the other five runs used
+the full 2M. Three seeds is also a small sample for a null result — it rules out
+a large effect, not a small one. Raw numbers are in
+`experiments/ablation_results.json`.
 
 ---
 
