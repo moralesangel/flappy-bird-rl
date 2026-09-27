@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flappy Bird RL — live demo</title>
+<meta name="description" content="A PPO agent trained with Stable-Baselines3, running live in the browser. 171.7 pipes on average over 30 held-out seeds.">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --line: #262b36;
+    --text: #e7ebf3;
+    --muted: #9aa4b8;
+    --accent: #58b368;
+    --accent-dim: #3d8049;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f6f7f9; --panel: #fff; --line: #e2e6ee;
+      --text: #12151b; --muted: #5a6478;
+      --accent: #2f8f45; --accent-dim: #246e35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 32px 16px 56px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 28px; }
+  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 0; }
+  .sub a { color: var(--accent); }
+
+  .stage {
+    display: flex; gap: 24px; align-items: flex-start;
+    justify-content: center; flex-wrap: wrap;
+  }
+  .frame {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px; line-height: 0;
+  }
+  canvas {
+    image-rendering: pixelated;
+    border-radius: 6px; display: block;
+    width: 288px; height: 512px;
+  }
+  @media (max-width: 420px) {
+    canvas { width: 240px; height: 427px; }
+  }
+
+  .side { flex: 1 1 260px; min-width: 240px; max-width: 340px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; margin-bottom: 14px;
+  }
+  .card h2 {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 0 0 12px; font-weight: 600;
+  }
+  .row { display: flex; justify-content: space-between; padding: 5px 0; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .big { font-size: 1.9rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    flex: 1 1 auto; font: inherit; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #fff; border: 0;
+    padding: 9px 14px; border-radius: 8px;
+  }
+  button:hover { background: var(--accent-dim); }
+  button.ghost {
+    background: transparent; color: var(--text); border: 1px solid var(--line);
+  }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  .bars { margin-top: 4px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .bar-label { width: 56px; color: var(--muted); font-size: .8rem; }
+  .bar-track {
+    flex: 1; height: 7px; background: var(--line);
+    border-radius: 4px; overflow: hidden;
+  }
+  .bar-fill { height: 100%; background: var(--accent); width: 0; }
+  .note { color: var(--muted); font-size: .84rem; margin: 10px 0 0; }
+  footer { text-align: center; color: var(--muted); margin-top: 34px; font-size: .88rem; }
+  footer a { color: var(--accent); }
+  .err {
+    background: #40201f; border: 1px solid #7a3b38; color: #ffd9d6;
+    padding: 12px 14px; border-radius: 8px; margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Flappy Bird RL</h1>
+    <p class="sub">
+      A PPO agent playing live in your browser —
+      <a href="https://github.com/moralesangel/flappy-bird-rl">source on GitHub</a>
+    </p>
+  </header>
+
+  <div class="stage">
+    <div class="frame">
+      <canvas id="screen" width="288" height="512"></canvas>
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <h2>This run</h2>
+        <div class="row"><span>Pipes</span><span class="big" id="score">0</span></div>
+        <div class="row"><span>Best this session</span><span id="best">0</span></div>
+        <div class="row"><span>Episode</span><span id="episode">1</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Policy output</h2>
+        <div class="bars">
+          <div class="bar-row">
+            <span class="bar-label">flap</span>
+            <span class="bar-track"><span class="bar-fill" id="bar-flap"></span></span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">glide</span>
+            <span class="bar-track"><span class="bar-fill" id="bar-idle"></span></span>
+          </div>
+        </div>
+        <p class="note">Softmax over the actor's two logits. The demo takes the
+        argmax, matching <code>deterministic=True</code> at evaluation.</p>
+      </div>
+
+      <div class="card">
+        <h2>Controls</h2>
+        <div class="controls">
+          <button id="toggle">Pause</button>
+          <button id="skip" class="ghost">New episode</button>
+        </div>
+        <div class="controls" style="margin-top:8px">
+          <button id="speed" class="ghost">Speed ×1</button>
+          <button id="human" class="ghost">You play</button>
+        </div>
+        <p class="note" id="mode-note">Watching the trained agent.</p>
+      </div>
+
+      <div class="card">
+        <h2>Model</h2>
+        <div class="row"><span>Algorithm</span><span>PPO</span></div>
+        <div class="row"><span>Network</span><span>7→64→64→2</span></div>
+        <div class="row"><span>Parameters</span><span>4,802</span></div>
+        <div class="row"><span>Held-out mean</span><span>171.7</span></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    The network runs as plain JavaScript — no ML runtime. Weights are exported
+    from the Stable-Baselines3 model by
+    <code>export_policy.py</code>.<br>
+    Trained with <a href="https://stable-baselines3.readthedocs.io/">Stable-Baselines3</a>
+    on a <a href="https://gymnasium.farama.org/">Gymnasium</a> environment.
+  </footer>
+</div>
+
+<script type="module">
+import { createNet, FlappyGame } from './game.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('screen');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const SPRITES = {
+  bg: '../assets/background-day.png',
+  pipe: '../assets/pipe-green.png',
+  bird: '../assets/yellowbird-midflap.png',
+};
+for (let d = 0; d <= 9; d++) SPRITES['d' + d] = `../assets/${d}.png`;
+
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error(src));
+    img.src = src;
+  });
+}
+
+function fail(msg) {
+  const el = document.createElement('div');
+  el.className = 'err';
+  el.textContent = msg;
+  document.querySelector('.wrap').appendChild(el);
+}
+
+(async function main() {
+  let policy, img;
+  try {
+    const [p, entries] = await Promise.all([
+      fetch('./policy.json').then((r) => {
+        if (!r.ok) throw new Error('policy.json ' + r.status);
+        return r.json();
+      }),
+      Promise.all(
+        Object.entries(SPRITES).map(async ([k, src]) => [k, await loadImage(src)])
+      ),
+    ]);
+    policy = p;
+    img = Object.fromEntries(entries);
+  } catch (e) {
+    fail('Could not load the demo: ' + e.message);
+    return;
+  }
+
+  const E = policy.env;
+  const net = createNet(policy.layers);
+
+  // Pre-scale the pipe once, as the Python renderer does: the sprite is 320px
+  // tall but has to cover the full screen height.
+  const pipeUp = document.createElement('canvas');
+  pipeUp.width = E.PIPE_WIDTH; pipeUp.height = E.HEIGHT;
+  pipeUp.getContext('2d').drawImage(img.pipe, 0, 0, E.PIPE_WIDTH, E.HEIGHT);
+
+  const pipeDown = document.createElement('canvas');
+  pipeDown.width = E.PIPE_WIDTH; pipeDown.height = E.HEIGHT;
+  const pd = pipeDown.getContext('2d');
+  pd.translate(0, E.HEIGHT); pd.scale(1, -1);
+  pd.drawImage(pipeUp, 0, 0);
+
+  let seed = Math.floor(Math.random() * 1e6);
+  const game = new FlappyGame(E, seed);
+  let best = 0, episode = 1, running = true, speed = 1, humanMode = false;
+  let flapHeld = false;
+  // Seed the readout from the real first observation so the bars are never
+  // blank on the opening frame.
+  let probs = softmax(net(game.observe()));
+
+  function drawScore(value, cx, top, scale = 1) {
+    const digits = String(value).split('').map((c) => img['d' + c]);
+    const total = digits.reduce((s, d) => s + d.width * scale, 0);
+    let x = cx - total / 2;
+    for (const d of digits) {
+      ctx.drawImage(d, x, top, d.width * scale, d.height * scale);
+      x += d.width * scale;
+    }
+  }
+
+  function render() {
+    ctx.drawImage(img.bg, 0, 0);
+    for (const p of game.pipes) {
+      ctx.drawImage(pipeDown, p.x, game.gapTop(p) - E.HEIGHT);
+      ctx.drawImage(pipeUp, p.x, game.gapBottom(p));
+    }
+    const b = img.bird;
+    ctx.save();
+    ctx.translate(E.BIRD_X, game.birdY);
+    ctx.rotate(Math.max(-0.5, Math.min(1.2, game.birdV / 14)));
+    ctx.drawImage(b, -b.width / 2, -b.height / 2);
+    ctx.restore();
+
+    drawScore(game.score, E.WIDTH / 2, 20);
+  }
+
+  function softmax(l) {
+    const m = Math.max(l[0], l[1]);
+    const a = Math.exp(l[0] - m), b = Math.exp(l[1] - m);
+    return [a / (a + b), b / (a + b)];
+  }
+
+  function tick() {
+    let action;
+    if (humanMode) {
+      action = flapHeld ? 1 : 0;
+      flapHeld = false;
+      probs = [action ? 0 : 1, action ? 1 : 0];
+    } else {
+      const logits = net(game.observe());
+      probs = softmax(logits);
+      action = logits[1] > logits[0] ? 1 : 0;
+    }
+
+    game.step(action);
+
+    if (game.dead) {
+      best = Math.max(best, game.score);
+      episode += 1;
+      seed = Math.floor(Math.random() * 1e6);
+      game.reset(seed);
+      $('episode').textContent = episode;
+      $('best').textContent = best;
+    }
+  }
+
+  function frame() {
+    if (running) for (let i = 0; i < speed; i++) tick();
+    render();
+    $('score').textContent = game.score;
+    $('bar-flap').style.width = (probs[1] * 100).toFixed(1) + '%';
+    $('bar-idle').style.width = (probs[0] * 100).toFixed(1) + '%';
+    requestAnimationFrame(frame);
+  }
+
+  $('toggle').onclick = (e) => {
+    running = !running;
+    e.target.textContent = running ? 'Pause' : 'Resume';
+  };
+  $('skip').onclick = () => {
+    seed = Math.floor(Math.random() * 1e6);
+    game.reset(seed);
+    episode += 1;
+    $('episode').textContent = episode;
+  };
+  $('speed').onclick = (e) => {
+    speed = speed === 1 ? 2 : speed === 2 ? 4 : 1;
+    e.target.textContent = 'Speed ×' + speed;
+  };
+  $('human').onclick = (e) => {
+    humanMode = !humanMode;
+    e.target.textContent = humanMode ? 'Agent plays' : 'You play';
+    $('mode-note').textContent = humanMode
+      ? 'Your turn — press SPACE or tap the canvas to flap.'
+      : 'Watching the trained agent.';
+    seed = Math.floor(Math.random() * 1e6);
+    game.reset(seed);
+  };
+
+  addEventListener('keydown', (ev) => {
+    if (ev.code === 'Space') {
+      ev.preventDefault();
+      flapHeld = true;
+    }
+  });
+  canvas.addEventListener('pointerdown', () => { flapHeld = true; });
+
+  frame();
+})();
+</script>
+</body>
+</html>

@@ -8,6 +8,9 @@ the demo runs on a fresh clone without training anything.
   <img src="docs/demo.gif" alt="The trained PPO agent clearing pipes" width="220">
 </p>
 
+**[▶ Play the live demo](https://moralesangel.github.io/flappy-bird-rl/)** — the
+trained policy running in your browser, no install required.
+
 **Trained agent: 171.7 pipes on average over 30 held-out seeds** (median 156).
 
 ```bash
@@ -138,16 +141,43 @@ flappy_env.py                     the Gymnasium environment
 train.py                          PPO training entry point
 evaluate.py                       held-out evaluation
 play.py                           interactive play, menus, game-over screen
+export_policy.py                  exports the actor to docs/policy.json
 record_demo.py                    renders docs/demo.gif
 experiments/
   ablation_lookahead.py           the observation-space ablation
   ablation_results.json           its raw output
+docs/                             the GitHub Pages demo
+  index.html                      page and render loop
+  game.js                         JS port of the env + the actor forward pass
+  policy.json                     exported weights and env constants
 assets/                           sprites
 ppo_flappy.zip                    trained policy (committed)
 ```
 
 Menus and the game-over card live in `play.py`, not the environment, so
 `env.step()` never emits a frame the agent does not act on.
+
+---
+
+## The browser demo
+
+The trained policy is a 7→64→64→2 MLP with tanh activations. Only the actor
+path matters for inference, which is 4,802 parameters — small enough that the
+demo ships the weights as JSON and does the forward pass in plain JavaScript.
+There is no TensorFlow.js, ONNX runtime or WASM blob; `docs/game.js` is a few
+dozen lines of loops over `Float64Array`.
+
+`export_policy.py` writes both the weights and the environment constants into
+`docs/policy.json`, so the browser never hardcodes a number that Python also
+owns — a physics constant can only drift in one place.
+
+The port was checked against the Python implementation rather than eyeballed:
+a 300-step reference trace of `(observation, action)` pairs from the trained
+model reproduces with **zero action mismatches** in JavaScript. Pipe layouts do
+differ, since the Python env seeds a Mersenne Twister that the browser does not
+reproduce, but the policy is a function of the observation and not of the
+layout, so behaviour is preserved — the JS build scores a comparable 125.8 mean
+over 15 browser seeds.
 
 ---
 
