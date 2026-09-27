@@ -77,14 +77,53 @@
   }
   button.ghost:hover { border-color: var(--accent); color: var(--accent); }
 
-  .bars { margin-top: 4px; }
+  /* Selected action. The trained policy is near-saturated -- P(flap) is under
+     0.01 on ~84% of steps -- so a probability bar reads as permanently empty.
+     The discrete action is the informative signal, so it leads. */
+  .action {
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px; padding: 14px 0 10px;
+    font-size: 1.15rem; font-weight: 700; letter-spacing: .04em;
+    border-radius: 9px; background: var(--line);
+    color: var(--muted); transition: background .06s, color .06s;
+  }
+  .action.flap { background: var(--accent); color: #fff; }
+  .action .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: currentColor; opacity: .55;
+  }
+  .action.flap .dot { opacity: 1; }
+
+  /* One cell per recent step: the flap pattern is a rhythm, and a single
+     frame at 30 FPS is too brief to see on its own. */
+  .history {
+    display: flex; gap: 1px; height: 26px; margin-top: 10px;
+    align-items: flex-end;
+  }
+  .history i {
+    flex: 1; min-width: 0; background: var(--line); height: 5px;
+  }
+  .history i.on { background: var(--accent); height: 100%; }
+
+  .bars { margin-top: 12px; }
   .bar-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
   .bar-label { width: 56px; color: var(--muted); font-size: .8rem; }
   .bar-track {
-    flex: 1; height: 7px; background: var(--line);
-    border-radius: 4px; overflow: hidden;
+    flex: 1; height: 9px; background: var(--line);
+    border-radius: 5px; overflow: hidden;
   }
-  .bar-fill { height: 100%; background: var(--accent); width: 0; }
+  /* No transition: a 1-2 frame spike must not be smoothed away.
+     min-width keeps a tiny-but-nonzero probability visible as a sliver
+     rather than vanishing into the track. */
+  .bar-fill {
+    height: 100%; background: var(--accent); width: 0;
+    min-width: 0; border-radius: 5px;
+  }
+  .bar-fill.nonzero { min-width: 3px; }
+  .pval {
+    width: 74px; text-align: right; font-variant-numeric: tabular-nums;
+    font-size: .78rem; color: var(--muted);
+  }
   .note { color: var(--muted); font-size: .84rem; margin: 10px 0 0; }
   footer { text-align: center; color: var(--muted); margin-top: 34px; font-size: .88rem; }
   footer a { color: var(--accent); }
@@ -118,19 +157,26 @@
       </div>
 
       <div class="card">
-        <h2>Policy output</h2>
+        <h2>Action</h2>
+        <div class="action" id="action"><span class="dot"></span><span id="action-label">GLIDE</span></div>
+        <div class="history" id="history" title="the last 90 actions, newest on the right"></div>
         <div class="bars">
           <div class="bar-row">
             <span class="bar-label">flap</span>
             <span class="bar-track"><span class="bar-fill" id="bar-flap"></span></span>
+            <span class="pval" id="p-flap">0.0000</span>
           </div>
           <div class="bar-row">
             <span class="bar-label">glide</span>
             <span class="bar-track"><span class="bar-fill" id="bar-idle"></span></span>
+            <span class="pval" id="p-idle">1.0000</span>
           </div>
         </div>
-        <p class="note">Softmax over the actor's two logits. The demo takes the
-        argmax, matching <code>deterministic=True</code> at evaluation.</p>
+        <p class="note">Argmax over the actor's two logits, matching
+        <code>deterministic=True</code> at evaluation. The trained policy is
+        confident: P(flap) is below 0.01 on roughly 84% of steps, so the bars
+        sit near zero and spike for a frame or two — which is why the action
+        and its history are shown directly.</p>
       </div>
 
       <div class="card">
@@ -237,6 +283,20 @@ function fail(msg) {
   // Seed the readout from the real first observation so the bars are never
   // blank on the opening frame.
   let probs = softmax(net(game.observe()));
+  let lastAction = 0;
+  // A flap can last a single 33ms step, which is below what the eye reliably
+  // catches. Hold the indicator lit for a few frames after one fires.
+  let flapGlow = 0;
+
+  const HISTORY_LEN = 90;
+  const history = new Array(HISTORY_LEN).fill(0);
+  const historyEl = $('history');
+  const cells = [];
+  for (let i = 0; i < HISTORY_LEN; i++) {
+    const c = document.createElement('i');
+    historyEl.appendChild(c);
+    cells.push(c);
+  }
 
   function drawScore(value, cx, top, scale = 1) {
     const digits = String(value).split('').map((c) => img['d' + c]);
@@ -282,6 +342,11 @@ function fail(msg) {
       action = logits[1] > logits[0] ? 1 : 0;
     }
 
+    lastAction = action;
+    if (action === 1) flapGlow = 4;
+    history.push(action);
+    history.shift();
+
     game.step(action);
 
     if (game.dead) {
@@ -298,8 +363,26 @@ function fail(msg) {
     if (running) for (let i = 0; i < speed; i++) tick();
     render();
     $('score').textContent = game.score;
-    $('bar-flap').style.width = (probs[1] * 100).toFixed(1) + '%';
-    $('bar-idle').style.width = (probs[0] * 100).toFixed(1) + '%';
+
+    const lit = lastAction === 1 || flapGlow > 0;
+    if (flapGlow > 0) flapGlow--;
+    $('action').classList.toggle('flap', lit);
+    $('action-label').textContent = lit ? 'FLAP' : 'GLIDE';
+
+    for (let i = 0; i < HISTORY_LEN; i++) {
+      cells[i].classList.toggle('on', history[i] === 1);
+    }
+
+    // Probabilities can be ~1e-7; a fixed decimal would read as a flat 0.0000.
+    const fmt = (v) =>
+      v >= 0.001 || v === 0 ? v.toFixed(4) : v.toExponential(1);
+    const barFlap = $('bar-flap'), barIdle = $('bar-idle');
+    barFlap.style.width = (probs[1] * 100).toFixed(1) + '%';
+    barIdle.style.width = (probs[0] * 100).toFixed(1) + '%';
+    barFlap.classList.toggle('nonzero', probs[1] > 0);
+    barIdle.classList.toggle('nonzero', probs[0] > 0);
+    $('p-flap').textContent = fmt(probs[1]);
+    $('p-idle').textContent = fmt(probs[0]);
     requestAnimationFrame(frame);
   }
 
