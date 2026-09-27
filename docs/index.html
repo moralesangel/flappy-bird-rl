@@ -174,11 +174,11 @@ const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
 const SPRITES = {
-  bg: '../assets/background-day.png',
-  pipe: '../assets/pipe-green.png',
-  bird: '../assets/yellowbird-midflap.png',
+  bg: './assets/background-day.png',
+  pipe: './assets/pipe-green.png',
+  bird: './assets/yellowbird-midflap.png',
 };
-for (let d = 0; d <= 9; d++) SPRITES['d' + d] = `../assets/${d}.png`;
+for (let d = 0; d <= 9; d++) SPRITES['d' + d] = `./assets/${d}.png`;
 
 function loadImage(src) {
   return new Promise((res, rej) => {
